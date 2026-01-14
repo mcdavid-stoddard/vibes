@@ -67,6 +67,7 @@ function getEmojis(amount) {
   if (amount >= 100000) return "🚨🚨🚨🚨🚨";
   if (amount >= 10000) return "🦍🦍🦍🦍🦍";
   if (amount >= 1000) return "🐋🐋🐋🐋🐋";
+  if (amount >= 10) return "🐟🐟🐟🐟🐟";
   return "";
 }
 
