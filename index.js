@@ -1,7 +1,9 @@
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK;
 const MULTISIG = "0x8a06c7c7F7f7c0c5aC2c05537afeb9A086Bb6BC4".toLowerCase();
+const CHIA_ADDRESS = "xch1mwfnmxkf5tup5myd8na7w3xuv6d9kg3r4827uf376arj34nrsa4qw8xv5x";
+const CHIA_API = `https://edge.silicon.net/v1/spacescan/address/token-transactions/${CHIA_ADDRESS}`;
 
-const CHAINS = {
+const EVM_CHAINS = {
   ethereum: {
     rpc: "https://eth.llamarpc.com",
     name: "Ethereum",
@@ -22,11 +24,25 @@ const CHAINS = {
   },
 };
 
+const CHIA_TOKENS = {
+  "fa4a180ac326e67ea289b869e3448256f6af05721f7cf934cb9901baa6b7a99d": {
+    symbol: "wUSDC.b",
+    name: "Wrapped USDC",
+    decimals: 3,
+  },
+  "ae1536f56760e471ad85ead45f00d680ff9cca73b8cc3407be778f1c0c606eac": {
+    symbol: "BYC",
+    name: "Bytecash",
+    decimals: 3,
+  },
+};
+
 // ERC20 Transfer event signature
 const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
-// Track last processed block per chain
+// Track last processed block/tx per chain
 const lastBlocks = {};
+let lastChiaTimestamp = null;
 
 async function rpcCall(rpc, method, params) {
   const res = await fetch(rpc, {
@@ -67,7 +83,6 @@ function getEmojis(amount) {
   if (amount >= 100000) return "🚨🚨🚨🚨🚨";
   if (amount >= 10000) return "🦍🦍🦍🦍🦍";
   if (amount >= 1000) return "🐋🐋🐋🐋🐋";
-  if (amount >= 10) return "🐟🐟🐟🐟🐟";
   return "";
 }
 
@@ -130,15 +145,67 @@ async function checkChain(chainId, chain) {
   }
 }
 
+async function checkChia() {
+  try {
+    const res = await fetch(CHIA_API);
+    const json = await res.json();
+    
+    if (!json.success || !json.data.received_transactions) return;
+    
+    const transactions = json.data.received_transactions.transactions;
+    
+    // On first run, just record the latest timestamp
+    if (!lastChiaTimestamp && transactions.length > 0) {
+      lastChiaTimestamp = transactions[0].time;
+      console.log(`[Chia] Initialized with latest tx at ${lastChiaTimestamp}`);
+      return;
+    }
+    
+    // Check for new transactions (newer than lastChiaTimestamp)
+    for (const tx of transactions) {
+      if (new Date(tx.time) <= new Date(lastChiaTimestamp)) break;
+      
+      const token = CHIA_TOKENS[tx.asset_id];
+      if (!token) continue; // Skip unknown tokens
+      
+      const amount = tx.token_amount;
+      const from = tx.from;
+      const emojis = getEmojis(Number(amount));
+      
+      const message = [
+        emojis,
+        `*New Deposit on Chia!*`,
+        `• From: \`${from}\``,
+        `• Amount: *${amount.toLocaleString()} ${token.symbol}*`,
+        `• Token: ${token.name}`,
+        `• Tx: https://www.spacescan.io/coin/${tx.coin_id}`,
+        emojis,
+      ].filter(Boolean).join("\n");
+      
+      await sendSlackMessage(message);
+      console.log(`[Chia] Deposit: ${amount} ${token.symbol} from ${from}`);
+    }
+    
+    // Update last timestamp
+    if (transactions.length > 0) {
+      lastChiaTimestamp = transactions[0].time;
+    }
+  } catch (err) {
+    console.error(`[Chia] Error:`, err.message);
+  }
+}
+
 async function poll() {
   console.log("Checking for deposits...");
-  await Promise.all(
-    Object.entries(CHAINS).map(([id, chain]) => checkChain(id, chain))
-  );
+  await Promise.all([
+    ...Object.entries(EVM_CHAINS).map(([id, chain]) => checkChain(id, chain)),
+    checkChia(),
+  ]);
 }
 
 // Poll every 15 seconds
 console.log("🚀 Deposit bot started");
-console.log(`Watching: ${MULTISIG}`);
+console.log(`Watching EVM: ${MULTISIG}`);
+console.log(`Watching Chia: ${CHIA_ADDRESS}`);
 poll();
 setInterval(poll, 15000);
