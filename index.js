@@ -5,19 +5,19 @@ const CHIA_API = `https://edge.silicon.net/v1/spacescan/address/token-transactio
 
 const EVM_CHAINS = {
   ethereum: {
-    rpc: "https://eth.llamarpc.com",
+    rpc: "https://eth-mainnet.g.alchemy.com/v2/YIySSKWUU-ZiUl29cQHLd",
     name: "Ethereum",
     explorer: "https://etherscan.io",
     usdc: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
   },
   arbitrum: {
-    rpc: "https://arb1.arbitrum.io/rpc",
+    rpc: "https://arb-mainnet.g.alchemy.com/v2/YIySSKWUU-ZiUl29cQHLd",
     name: "Arbitrum",
     explorer: "https://arbiscan.io",
     usdc: "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
   },
   base: {
-    rpc: "https://mainnet.base.org",
+    rpc: "https://base-mainnet.g.alchemy.com/v2/YIySSKWUU-ZiUl29cQHLd",
     name: "Base",
     explorer: "https://basescan.org",
     usdc: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
@@ -70,12 +70,10 @@ async function getLogs(rpc, fromBlock, toBlock, address, topics) {
 }
 
 function decodeTransferAmount(data) {
-  // data is hex string of uint256
   return BigInt(data) / BigInt(1e6); // USDC has 6 decimals
 }
 
 function decodeAddress(topic) {
-  // address is in last 40 chars of 32-byte topic
   return "0x" + topic.slice(-40);
 }
 
@@ -83,7 +81,25 @@ function getEmojis(amount) {
   if (amount >= 100000) return "🚨🚨🚨🚨🚨";
   if (amount >= 10000) return "🦍🦍🦍🦍🦍";
   if (amount >= 1000) return "🐋🐋🐋🐋🐋";
+  if (amount >= 10) return ":troll::troll::troll:";
   return "";
+}
+
+// Track running total across all chains
+let totalDepositsAllChains = 0;
+
+const TOTAL_API = "https://script.google.com/macros/s/AKfycbza5Cy5qYAa2n0UaJ9o3ZKKtuHv-nS7tECGKIApb2shfY0rqjkgu7LFtwVfQjXIf1BG/exec";
+
+async function fetchTotalDeposits() {
+  try {
+    const res = await fetch(TOTAL_API);
+    const json = await res.json();
+    totalDepositsAllChains = json.total || 0;
+    console.log(`📊 Initialized total deposits: ${totalDepositsAllChains.toLocaleString()}`);
+  } catch (err) {
+    console.error("Failed to fetch total deposits:", err.message);
+    totalDepositsAllChains = 0;
+  }
 }
 
 async function sendSlackMessage(text) {
@@ -114,8 +130,8 @@ async function checkChain(chainId, chain) {
       chain.usdc,
       [
         TRANSFER_TOPIC,
-        null, // from (any)
-        "0x000000000000000000000000" + MULTISIG.slice(2), // to (our multisig)
+        null,
+        "0x000000000000000000000000" + MULTISIG.slice(2),
       ]
     );
     
@@ -125,6 +141,9 @@ async function checkChain(chainId, chain) {
       const txHash = log.transactionHash;
       const emojis = getEmojis(Number(amount));
       
+      // Update running total
+      totalDepositsAllChains += Number(amount);
+      
       const message = [
         emojis,
         `*New Deposit on ${chain.name}!*`,
@@ -132,6 +151,8 @@ async function checkChain(chainId, chain) {
         `• Amount: *${amount.toLocaleString()} USDC*`,
         `• Token: USDC`,
         `• Tx: ${chain.explorer}/tx/${txHash}`,
+        ``,
+        `📊 *Total Deposits (All Chains): ${totalDepositsAllChains.toLocaleString()}*`,
         emojis,
       ].filter(Boolean).join("\n");
       
@@ -150,7 +171,10 @@ async function checkChia() {
     const res = await fetch(CHIA_API);
     const json = await res.json();
     
-    if (!json.success || !json.data.received_transactions) return;
+    if (!json.success || !json.data?.received_transactions?.transactions) {
+      console.log("[Chia] No transactions or API error");
+      return;
+    }
     
     const transactions = json.data.received_transactions.transactions;
     
@@ -166,11 +190,14 @@ async function checkChia() {
       if (new Date(tx.time) <= new Date(lastChiaTimestamp)) break;
       
       const token = CHIA_TOKENS[tx.asset_id];
-      if (!token) continue; // Skip unknown tokens
+      if (!token) continue;
       
       const amount = tx.token_amount;
       const from = tx.from;
       const emojis = getEmojis(Number(amount));
+      
+      // Update running total
+      totalDepositsAllChains += Number(amount);
       
       const message = [
         emojis,
@@ -179,6 +206,8 @@ async function checkChia() {
         `• Amount: *${amount.toLocaleString()} ${token.symbol}*`,
         `• Token: ${token.name}`,
         `• Tx: https://www.spacescan.io/coin/${tx.coin_id}`,
+        ``,
+        `📊 *Total Deposits (All Chains): ${totalDepositsAllChains.toLocaleString()}*`,
         emojis,
       ].filter(Boolean).join("\n");
       
@@ -207,5 +236,9 @@ async function poll() {
 console.log("🚀 Deposit bot started");
 console.log(`Watching EVM: ${MULTISIG}`);
 console.log(`Watching Chia: ${CHIA_ADDRESS}`);
-poll();
-setInterval(poll, 15000);
+
+// Initialize total from Google Sheet, then start polling
+fetchTotalDeposits().then(() => {
+  poll();
+  setInterval(poll, 15000);
+});
