@@ -8,23 +8,23 @@ const CHIA_ADDRESS = "xch1mwfnmxkf5tup5myd8na7w3xuv6d9kg3r4827uf376arj34nrsa4qw8
 const CHIA_API = `https://edge.silicon.net/v1/spacescan/address/token-transactions/${CHIA_ADDRESS}`;
 const TOTAL_API = "https://script.google.com/macros/s/AKfycbza5Cy5qYAa2n0UaJ9o3ZKKtuHv-nS7tECGKIApb2shfY0rqjkgu7LFtwVfQjXIf1BG/exec";
 
-// USDC contract addresses per chain
+// USDC contract addresses per chain (using Alchemy's network format)
 const USDC_CONTRACTS = {
-  "eth-mainnet": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-  "arb-mainnet": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
-  "base-mainnet": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+  "ETH_MAINNET": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+  "ARB_MAINNET": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+  "BASE_MAINNET": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
 };
 
 const CHAIN_NAMES = {
-  "eth-mainnet": "Ethereum",
-  "arb-mainnet": "Arbitrum", 
-  "base-mainnet": "Base",
+  "ETH_MAINNET": "Ethereum",
+  "ARB_MAINNET": "Arbitrum", 
+  "BASE_MAINNET": "Base",
 };
 
 const CHAIN_EXPLORERS = {
-  "eth-mainnet": "https://etherscan.io",
-  "arb-mainnet": "https://arbiscan.io",
-  "base-mainnet": "https://basescan.org",
+  "ETH_MAINNET": "https://etherscan.io",
+  "ARB_MAINNET": "https://arbiscan.io",
+  "BASE_MAINNET": "https://basescan.org",
 };
 
 const CHIA_TOKENS = {
@@ -75,25 +75,41 @@ async function sendSlackMessage(text) {
 // Webhook endpoint for Alchemy
 app.post('/webhook/alchemy', async (req, res) => {
   try {
-    const { event, webhookId } = req.body;
+    console.log('Received ADDRESS_ACTIVITY webhook');
     
-    // Handle Alchemy's webhook validation request
-    if (req.body.type === 'ADDRESS_ACTIVITY') {
-      console.log('Received ADDRESS_ACTIVITY webhook');
-    }
+    // DEBUG LOGGING
+    const chainId = req.body.event?.network;
+    console.log('Chain ID from Alchemy:', chainId);
     
     const activity = req.body.event?.activity || [];
+    console.log('Activity count:', activity.length);
     
     for (const tx of activity) {
+      console.log('Processing tx:', JSON.stringify({
+        toAddress: tx.toAddress,
+        fromAddress: tx.fromAddress,
+        rawContractAddress: tx.rawContract?.address,
+        value: tx.value,
+        asset: tx.asset
+      }));
+      
       // Only process incoming transfers to our multisig
-      if (tx.toAddress?.toLowerCase() !== MULTISIG) continue;
+      if (tx.toAddress?.toLowerCase() !== MULTISIG) {
+        console.log('Skipping - toAddress mismatch. Got:', tx.toAddress?.toLowerCase(), 'Expected:', MULTISIG);
+        continue;
+      }
       
       // Only process USDC transfers
-      const chainId = req.body.event?.network;
       const usdcAddress = USDC_CONTRACTS[chainId];
-      if (!usdcAddress) continue;
+      if (!usdcAddress) {
+        console.log('Skipping - unknown chain:', chainId, 'Known chains:', Object.keys(USDC_CONTRACTS));
+        continue;
+      }
       
-      if (tx.rawContract?.address?.toLowerCase() !== usdcAddress) continue;
+      if (tx.rawContract?.address?.toLowerCase() !== usdcAddress) {
+        console.log('Skipping - not USDC. Got:', tx.rawContract?.address?.toLowerCase(), 'Expected:', usdcAddress);
+        continue;
+      }
       
       const amount = parseFloat(tx.value) || 0;
       const from = tx.fromAddress;
@@ -117,6 +133,7 @@ app.post('/webhook/alchemy', async (req, res) => {
         emojis,
       ].filter(Boolean).join("\n");
       
+      console.log('Sending Slack message for deposit:', amount, 'USDC');
       await sendSlackMessage(message);
       console.log(`[${chainName}] Deposit: ${amount} USDC from ${from}`);
     }
