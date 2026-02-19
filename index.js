@@ -7,7 +7,9 @@ const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK;
 const MULTISIG = "0x8a06c7c7F7f7c0c5aC2c05537afeb9A086Bb6BC4".toLowerCase();
 const CHIA_ADDRESS = "xch1mwfnmxkf5tup5myd8na7w3xuv6d9kg3r4827uf376arj34nrsa4qw8xv5x";
 const COINSET_API = "https://api.coinset.org";
-const TOTAL_API = "https://script.google.com/macros/s/AKfycbza5Cy5qYAa2n0UaJ9o3ZKKtuHv-nS7tECGKIApb2shfY0rqjkgu7LFtwVfQjXIf1BG/exec";
+
+// Base total includes fiat transactions + accounting adjustments as of Feb 2026
+const BASE_TOTAL_DEPOSITS = 334375.31;
 
 const CAT2_MOD_HASH = "37bef360ee858133b69d595a906dc45d01af50379dad515eb9518abb7c1d2a7a";
 
@@ -193,16 +195,9 @@ function getEmojis(amount) {
   return "";
 }
 
-async function fetchTotalDeposits() {
-  try {
-    const res = await fetch(TOTAL_API);
-    const json = await res.json();
-    totalDepositsAllChains = json.total || 0;
-    console.log(`📊 Initialized total deposits: $${totalDepositsAllChains.toLocaleString()}`);
-  } catch (err) {
-    console.error("Failed to fetch total deposits:", err.message);
-    totalDepositsAllChains = 0;
-  }
+function fetchTotalDeposits() {
+  totalDepositsAllChains = BASE_TOTAL_DEPOSITS;
+  console.log(`📊 Initialized total deposits from base: $${totalDepositsAllChains.toLocaleString()}`);
 }
 
 async function sendSlackMessage(text) {
@@ -362,7 +357,7 @@ async function start() {
     console.log(`[Chia] ${CHIA_TOKENS[assetId].symbol} puzzle hash: ${catPuzzleHashes[assetId]}`);
   }
 
-  await fetchTotalDeposits();
+  fetchTotalDeposits();
 
   app.listen(PORT, () => {
     console.log(`🚀 Deposit bot started on port ${PORT}`);
